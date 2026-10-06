@@ -1,0 +1,6 @@
+{
+  "name": "SANTUN: Misi Dakwah Damai - Adventure AR Game",
+  "description": "Permainan web edukasi interaktif AR tentang Khotbah, Tabligh, dan Dakwah untuk siswa kelas XI SMA/MA dengan kontrol gesture MediaPipe dan Three.js.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,1933 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>SANTUN: Misi Dakwah Damai - Adventure AR Game</title>
+    <meta name="description" content="Permainan web edukasi interaktif AR tentang Khotbah, Tabligh, dan Dakwah untuk siswa kelas XI SMA/MA dengan kontrol gesture MediaPipe dan Three.js." />
+    <meta property="og:title" content="SANTUN: Misi Dakwah Damai - Adventure AR Game" />
+    <meta property="og:description" content="Permainan web edukasi interaktif AR tentang Khotbah, Tabligh, dan Dakwah untuk siswa kelas XI SMA/MA dengan kontrol gesture MediaPipe dan Three.js." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- Tailwind CSS Browser CDN v4 -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    
+    <!-- MediaPipe Hands & Camera Utils CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+      @keyframes floatSlow {
+        0%, 100% { transform: translateY(0px) rotate(0deg); }
+        50% { transform: translateY(-8px) rotate(1deg); }
+      }
+      @keyframes pulseGlow {
+        0%, 100% { opacity: 0.6; transform: scale(1); }
+        50% { opacity: 0.9; transform: scale(1.04); }
+      }
+      .anim-float {
+        animation: floatSlow 4s ease-in-out infinite;
+      }
+      .anim-glow {
+        animation: pulseGlow 3s ease-in-out infinite;
+      }
+      /* Custom scrollbar for clean UI */
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: rgba(15, 23, 42, 0.6);
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(16, 185, 129, 0.4);
+        border-radius: 9999px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(16, 185, 129, 0.8);
+      }
+      /* Prevent unwanted tap highlight and text selection during gameplay */
+      .game-touch-surface {
+        user-select: none;
+        -webkit-user-select: none;
+        touch-action: manipulation;
+      }
+    </style>
+  </head>
+  <body class="bg-slate-950 text-slate-100 font-sans min-h-screen overflow-x-hidden selection:bg-emerald-500 selection:text-white game-touch-surface relative">
+    
+    <!-- Video Webcam Background (Screen-based AR Overlay) -->
+    <video
+      id="webcam-video"
+      class="fixed inset-0 w-full h-full object-cover z-0 pointer-events-none hidden transition-opacity duration-700"
+      playsinline
+      muted
+      autoplay
+      style="transform: scaleX(-1);"
+    ></video>
+
+    <!-- Synthetic AR Ambient Background (Fallback when camera is off/denied) -->
+    <div id="ambient-bg" class="fixed inset-0 z-0 bg-gradient-to-br from-slate-950 via-teal-950/70 to-slate-900 pointer-events-none">
+      <div class="absolute inset-0 opacity-15 bg-[radial-gradient(#10b981_1px,transparent_1px)] [background-size:24px_24px]"></div>
+      <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl anim-glow"></div>
+      <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl anim-glow" style="animation-delay: -1.5s;"></div>
+    </div>
+
+    <!-- Three.js 3D Virtual Overlay Canvas -->
+    <canvas id="three-canvas" class="fixed inset-0 w-full h-full z-10 pointer-events-auto cursor-crosshair"></canvas>
+
+    <!-- 2D AR Cursor / Landmark HUD Canvas -->
+    <canvas id="gesture-canvas" class="fixed inset-0 w-full h-full z-20 pointer-events-none"></canvas>
+
+    <!-- Virtual Hand Cursor Element for Crisp Visual Feedback -->
+    <div
+      id="hand-cursor"
+      class="fixed z-30 pointer-events-none -translate-x-1/2 -translate-y-1/2 hidden transition-transform duration-75 ease-out"
+      style="left: -100px; top: -100px;"
+    >
+      <div class="relative flex items-center justify-center">
+        <!-- Outer targeting ring -->
+        <div id="cursor-ring" class="w-12 h-12 rounded-full border-2 border-emerald-400/80 bg-emerald-500/20 backdrop-blur-xs shadow-lg shadow-emerald-500/50 transition-all duration-150"></div>
+        <!-- Inner targeting pip -->
+        <div id="cursor-pip" class="absolute w-3 h-3 rounded-full bg-emerald-300 shadow-md shadow-white"></div>
+        <!-- Gesture label pill -->
+        <div id="cursor-badge" class="absolute -bottom-7 whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-900/90 text-emerald-300 border border-emerald-500/40 shadow-sm backdrop-blur-sm">
+          Menunjuk
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN UI ROOT (Z-40) -->
+    <div id="app-container" class="relative z-40 min-h-screen flex flex-col justify-between pointer-events-none p-3 sm:p-5 max-w-7xl mx-auto">
+      
+      <!-- ================= HEADER BAR ================= -->
+      <header class="flex items-center justify-between gap-3 bg-slate-900/80 backdrop-blur-md border border-emerald-500/30 rounded-2xl p-3 sm:px-5 sm:py-3.5 shadow-xl pointer-events-auto">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-md shadow-emerald-500/30 text-white font-bold text-lg tracking-wider">
+            S
+          </div>
+          <div>
+            <h1 class="text-sm sm:text-base font-bold text-white tracking-wide flex items-center gap-2">
+              <span>SANTUN: Misi Dakwah Damai</span>
+              <span class="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                Kelas XI SMA/MA
+              </span>
+            </h1>
+            <p class="text-xs text-slate-300 hidden sm:block">
+              Eksplorasi Khotbah, Tabligh, dan Dakwah Berbasis Augmented Reality
+            </p>
+          </div>
+        </div>
+
+        <!-- Global Header Controls -->
+        <div class="flex items-center gap-2">
+          <!-- Audio Toggle -->
+          <button
+            id="btn-sound-toggle"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 border border-slate-700 hover:border-emerald-500/50 transition-all cursor-pointer shadow-sm"
+            title="Pengaturan Suara (Shortcut: M)"
+            aria-label="Atur Suara"
+          >
+            <span id="sound-icon">🔊</span>
+            <span id="sound-label" class="hidden md:inline">Suara: Nyala</span>
+          </button>
+
+          <!-- Camera Toggle / Status -->
+          <button
+            id="btn-cam-toggle"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800/80 hover:bg-slate-700/80 text-emerald-300 border border-emerald-500/40 transition-all cursor-pointer shadow-sm"
+            title="Beralih Mode Kamera"
+            aria-label="Toggle Kamera"
+          >
+            <span id="cam-status-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span id="cam-label">AR: Siap</span>
+          </button>
+
+          <!-- Pause Button (Visible during quiz) -->
+          <button
+            id="btn-pause-toggle"
+            class="hidden px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800/80 hover:bg-amber-600/80 text-amber-300 hover:text-white border border-amber-500/30 transition-all cursor-pointer shadow-sm"
+            title="Jeda Permainan (Shortcut: P atau Esc)"
+            aria-label="Jeda Permainan"
+          >
+            ⏸️ <span class="hidden sm:inline">Jeda</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- ================= SCENE 1: OPENING SCENE ================= -->
+      <section id="scene-opening" class="my-auto py-6 flex flex-col items-center justify-center text-center max-w-3xl mx-auto w-full pointer-events-auto">
+        <div class="bg-slate-900/85 backdrop-blur-xl border border-emerald-500/30 rounded-3xl p-6 sm:p-10 shadow-2xl shadow-emerald-950/60 relative overflow-hidden">
+          <!-- Background Glow Accent -->
+          <div class="absolute -top-24 -right-24 w-60 h-60 bg-emerald-500/15 rounded-full blur-3xl pointer-events-none"></div>
+          <div class="absolute -bottom-24 -left-24 w-60 h-60 bg-teal-500/15 rounded-full blur-3xl pointer-events-none"></div>
+
+          <!-- Thematic Badge -->
+          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold mb-4">
+            <span>✨ Pendidikan Agama Islam & Budi Pekerti</span>
+          </div>
+
+          <h2 class="text-2xl sm:text-4xl font-extrabold text-white tracking-tight mb-3">
+            Menebarkan Islam dengan <span class="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-amber-300">Santun dan Damai</span>
+          </h2>
+          
+          <p class="text-sm sm:text-base text-slate-300 leading-relaxed max-w-xl mx-auto mb-6">
+            Kenali hakikat <strong class="text-emerald-300 font-semibold">Khotbah</strong>, <strong class="text-teal-300 font-semibold">Tabligh</strong>, dan <strong class="text-amber-300 font-semibold">Dakwah</strong> melalui misi interaktif Augmented Reality. Pecahkan balon jawaban santun dengan gestur tangan atau sentuhan!
+          </p>
+
+          <!-- Gesture Quick Tutorial Grid -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 mb-8 text-left">
+            <div class="bg-slate-800/70 border border-slate-700/80 rounded-2xl p-3 flex flex-col items-center text-center">
+              <span class="text-2xl mb-1">✋</span>
+              <span class="text-xs font-bold text-white">Tangan Terbuka</span>
+              <span class="text-[11px] text-slate-400 mt-0.5">Mulai / Lanjut game</span>
+            </div>
+            <div class="bg-slate-800/70 border border-slate-700/80 rounded-2xl p-3 flex flex-col items-center text-center">
+              <span class="text-2xl mb-1">☝️</span>
+              <span class="text-xs font-bold text-white">Telunjuk</span>
+              <span class="text-[11px] text-slate-400 mt-0.5">Arahkan ke balon</span>
+            </div>
+            <div class="bg-slate-800/70 border border-slate-700/80 rounded-2xl p-3 flex flex-col items-center text-center">
+              <span class="text-2xl mb-1">👌</span>
+              <span class="text-xs font-bold text-white">Pinch (Cubit)</span>
+              <span class="text-[11px] text-slate-400 mt-0.5">Pecahkan balon</span>
+            </div>
+            <div class="bg-slate-800/70 border border-slate-700/80 rounded-2xl p-3 flex flex-col items-center text-center">
+              <span class="text-2xl mb-1">✊</span>
+              <span class="text-xs font-bold text-white">Kepalan Tangan</span>
+              <span class="text-[11px] text-slate-400 mt-0.5">Jeda permainan</span>
+            </div>
+          </div>
+
+          <!-- Primary Call to Action Buttons -->
+          <div class="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
+            <button
+              id="btn-start-camera"
+              class="w-full sm:w-auto px-7 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-sm sm:text-base shadow-lg shadow-emerald-600/40 hover:shadow-emerald-500/60 transform hover:-translate-y-0.5 transition-all cursor-pointer flex items-center justify-center gap-2.5"
+            >
+              <span>📷 Mulai dengan Kamera (AR)</span>
+            </button>
+            <button
+              id="btn-start-manual"
+              class="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 hover:border-emerald-500/50 font-semibold text-sm sm:text-base transition-all cursor-pointer flex items-center justify-center gap-2"
+            >
+              <span>🖱️ Main Tanpa Kamera (Klik/Sentuh)</span>
+            </button>
+          </div>
+
+          <!-- Quick Accessibility note -->
+          <p class="text-[11px] text-slate-400 mt-5">
+            💡 Kamera hanya digunakan lokal untuk deteksi gestur tanpa menyimpan video. Anda dapat beralih ke mode manual kapan saja. Keyboard 1-4 & Enter juga didukung.
+          </p>
+        </div>
+      </section>
+
+      <!-- ================= SCENE 2: QUIZ HUD & GAMEPLAY ================= -->
+      <section id="scene-quiz" class="hidden my-auto w-full flex flex-col justify-between flex-1 py-2 sm:py-4">
+        
+        <!-- TOP HUD: Progress, Question & Stats -->
+        <div class="w-full max-w-4xl mx-auto flex flex-col gap-2.5 pointer-events-auto">
+          
+          <!-- Progress Bar & Score Status Pill -->
+          <div class="bg-slate-900/85 backdrop-blur-md border border-emerald-500/30 rounded-2xl px-4 py-2.5 flex items-center justify-between gap-3 shadow-lg">
+            <div class="flex items-center gap-2">
+              <span id="badge-question-num" class="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 font-bold text-xs border border-emerald-500/40">
+                Soal 1 / 5
+              </span>
+              <!-- Score Counter -->
+              <span class="text-xs text-slate-300">
+                Skor: <strong id="val-score" class="text-emerald-400 font-bold text-sm">0</strong> / 50
+              </span>
+            </div>
+
+            <!-- Visual Progress Bar -->
+            <div class="flex-1 max-w-xs mx-2">
+              <div class="h-2 w-full bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                <div id="quiz-progress-bar" class="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500" style="width: 20%;"></div>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2 text-xs">
+              <span class="text-emerald-400 font-semibold flex items-center gap-1">
+                ✓ <span id="val-correct">0</span>
+              </span>
+              <span class="text-rose-400 font-semibold flex items-center gap-1">
+                ✗ <span id="val-wrong">0</span>
+              </span>
+            </div>
+          </div>
+
+          <!-- Question Prompt Card -->
+          <div class="bg-slate-900/90 backdrop-blur-lg border border-emerald-500/40 rounded-2xl p-4 sm:p-5 shadow-xl text-left relative">
+            <div class="flex items-start justify-between gap-2 mb-1.5">
+              <span class="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider">Tantangan Dakwah Damai</span>
+              <!-- Gesture live guidance chip -->
+              <span id="live-gesture-tip" class="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 flex items-center gap-1">
+                <span>🎯</span>
+                <span id="gesture-instruction-text">Arahkan telunjuk ke balon pilihan</span>
+              </span>
+            </div>
+            <h3 id="question-text" class="text-base sm:text-lg font-bold text-white leading-snug">
+              Memuat pertanyaan...
+            </h3>
+          </div>
+        </div>
+
+        <!-- 3D AR CENTER VIEWPORT GUIDANCE (Spacious area for 3D balloons) -->
+        <div class="flex-1 flex items-center justify-center my-3 relative min-h-[220px] sm:min-h-[280px]">
+          <!-- Reticle / Floating Guide Notification in 3D center if hand missing -->
+          <div id="gesture-helper-banner" class="hidden pointer-events-auto bg-slate-900/80 backdrop-blur-md border border-amber-500/40 text-amber-200 text-xs font-medium px-4 py-2 rounded-2xl shadow-lg flex items-center gap-2">
+            <span>👋</span>
+            <span id="helper-banner-msg">Arahkan tangan ke webcam atau klik langsung balon di layar!</span>
+          </div>
+        </div>
+
+        <!-- BOTTOM HUD: Synchronized 4 Option Cards for Screen Accessibility -->
+        <div class="w-full max-w-4xl mx-auto pointer-events-auto">
+          <div id="options-container" class="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+            <!-- Buttons dynamically populated with choices A, B, C, D -->
+          </div>
+          <div class="mt-2 text-center text-[11px] text-slate-400">
+            ⌨️ Pintasan Keyboard: Tekan angka <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-slate-300">1</kbd>-<kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-slate-300">4</kbd> atau <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-slate-300">A</kbd>-<kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-slate-300">D</kbd> untuk memilih balon.
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= MODAL: FEEDBACK & PEMBAHASAN ================= -->
+      <div id="modal-feedback" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md hidden pointer-events-auto">
+        <div class="bg-slate-900 border border-emerald-500/40 rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl relative overflow-hidden transform transition-all duration-300 scale-95 opacity-0" id="feedback-card">
+          <!-- Result Accent Icon -->
+          <div class="flex items-center gap-3 mb-4">
+            <div id="feedback-icon-box" class="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl font-bold">
+              ✓
+            </div>
+            <div>
+              <h3 id="feedback-title" class="text-xl sm:text-2xl font-extrabold text-white">
+                Jawaban Benar!
+              </h3>
+              <p id="feedback-subtitle" class="text-xs text-slate-300">
+                Pilihanmu sesuai dengan prinsip dakwah santun.
+              </p>
+            </div>
+          </div>
+
+          <!-- Key Answer Summary -->
+          <div class="bg-slate-800/80 border border-slate-700 rounded-2xl p-3.5 mb-4 text-xs sm:text-sm">
+            <div class="text-[11px] text-emerald-400 font-semibold mb-1 uppercase tracking-wider">Kunci Jawaban Tepat:</div>
+            <div id="feedback-correct-answer" class="text-slate-100 font-medium">
+              ...
+            </div>
+          </div>
+
+          <!-- Educational Explanation (Pembahasan) -->
+          <div class="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-4 mb-6 text-xs sm:text-sm leading-relaxed text-slate-200">
+            <div class="text-[11px] text-teal-300 font-bold mb-1 flex items-center gap-1.5">
+              <span>📖</span>
+              <span>PEMBAHASAN & HIKMAH ADAB</span>
+            </div>
+            <p id="feedback-explanation">
+              ...
+            </p>
+          </div>
+
+          <!-- Action Button -->
+          <button
+            id="btn-next-question"
+            class="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-bold text-sm sm:text-base shadow-lg shadow-emerald-600/40 transition-all cursor-pointer flex items-center justify-center gap-2"
+          >
+            <span>Lanjut ke Soal Berikutnya ➔</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ================= SCENE 3: FINAL RESULTS ================= -->
+      <section id="scene-result" class="hidden my-auto py-6 flex flex-col items-center justify-center text-center max-w-2xl mx-auto w-full pointer-events-auto">
+        <div class="bg-slate-900/90 backdrop-blur-xl border border-emerald-500/40 rounded-3xl p-6 sm:p-10 shadow-2xl relative overflow-hidden w-full">
+          <!-- Celebratory Badge -->
+          <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold mb-4">
+            <span>🏆 Hasil Misi Dakwah Damai</span>
+          </div>
+
+          <h2 id="result-headline" class="text-2xl sm:text-4xl font-extrabold text-white mb-2">
+            Mumtaz! Luar Biasa!
+          </h2>
+          <p id="result-subtext" class="text-xs sm:text-sm text-slate-300 mb-6 max-w-md mx-auto">
+            Kamu telah menyelesaikan seluruh misi dengan menjunjung tinggi nilai santun dan damai.
+          </p>
+
+          <!-- Score Big Card -->
+          <div class="bg-gradient-to-b from-slate-800/90 to-slate-900/90 border border-emerald-500/30 rounded-3xl p-6 mb-6 shadow-inner">
+            <div class="text-xs text-slate-400 font-medium mb-1">TOTAL SKOR AKHIR</div>
+            <div class="text-5xl sm:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-amber-300 mb-4">
+              <span id="final-score">50</span> <span class="text-2xl sm:text-3xl text-slate-400 font-semibold">/ 50</span>
+            </div>
+
+            <!-- Stats breakdown -->
+            <div class="grid grid-cols-3 gap-2 pt-4 border-t border-slate-700/80 text-center">
+              <div>
+                <div class="text-[11px] text-slate-400">Jawaban Benar</div>
+                <div id="final-correct" class="text-lg font-bold text-emerald-400">5</div>
+              </div>
+              <div>
+                <div class="text-[11px] text-slate-400">Jawaban Salah</div>
+                <div id="final-wrong" class="text-lg font-bold text-rose-400">0</div>
+              </div>
+              <div>
+                <div class="text-[11px] text-slate-400">Akurasi</div>
+                <div id="final-accuracy" class="text-lg font-bold text-amber-400">100%</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Motivational & Learning Summary Note -->
+          <div class="bg-slate-800/60 border border-slate-700/80 rounded-2xl p-4 text-xs text-slate-300 leading-relaxed text-left mb-6">
+            <div class="font-bold text-emerald-300 mb-1 flex items-center gap-1.5">
+              <span>🌿</span>
+              <span>Refleksi Nilai Dakwah Santun:</span>
+            </div>
+            <p id="result-reflection">
+              "Serulah (manusia) kepada jalan Tuhan-mu dengan hikmah dan pelajaran yang baik dan bantahlah mereka dengan cara yang baik." (Q.S. an-Nahl [16]:125). Khotbah memiliki ketetapan fikih tersendiri, tabligh menyampaikan kebenaran secara bertanggung jawab, dan dakwah bil hal menghadirkan keteladanan akhlak mulia.
+            </p>
+          </div>
+
+          <!-- Play Again Action -->
+          <div class="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <button
+              id="btn-play-again"
+              class="w-full sm:w-auto px-8 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-sm sm:text-base shadow-lg shadow-emerald-600/40 transition-all cursor-pointer flex items-center justify-center gap-2"
+            >
+              <span>🔄 Main Lagi (Ulangi Misi)</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= MODAL: PAUSE SCENE ================= -->
+      <div id="modal-pause" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md hidden pointer-events-auto">
+        <div class="bg-slate-900 border border-amber-500/40 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center">
+          <div class="w-16 h-16 rounded-3xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center text-3xl mx-auto mb-4">
+            ⏸️
+          </div>
+          <h3 class="text-xl font-bold text-white mb-2">Permainan Dijeda</h3>
+          <p class="text-xs text-slate-300 mb-6">
+            Anda dapat membuka telapak tangan ✋ di depan kamera atau menekan tombol di bawah untuk melanjutkan.
+          </p>
+          <div class="flex flex-col gap-2.5">
+            <button
+              id="btn-resume"
+              class="w-full py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-lg shadow-emerald-700/30 transition-all cursor-pointer"
+            >
+              ▶️ Lanjutkan Permainan
+            </button>
+            <button
+              id="btn-quit-to-home"
+              class="w-full py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs border border-slate-700 transition-all cursor-pointer"
+            >
+              🏠 Kembali ke Menu Utama
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= FOOTER ================= -->
+      <footer class="text-center text-[11px] text-slate-400 py-2 pointer-events-auto flex items-center justify-between flex-wrap gap-2">
+        <span>SANTUN AR &bull; Pendidikan Agama Islam Kelas XI</span>
+        <span class="flex items-center gap-2">
+          <span>Q.S. an-Nahl [16]:125</span>
+          <span class="text-emerald-400">&bull; Hikmah & Damai</span>
+        </span>
+      </footer>
+
+    </div>
+
+    <!-- Notification Toast Element -->
+    <div
+      id="toast-msg"
+      class="fixed bottom-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-2xl bg-slate-900/95 text-slate-100 text-xs font-medium border border-emerald-500/40 shadow-2xl backdrop-blur-md transition-all duration-300 opacity-0 pointer-events-none flex items-center gap-2"
+    >
+      <span id="toast-icon">ℹ️</span>
+      <span id="toast-text">Pesan</span>
+    </div>
+
+    <!-- ================= JAVASCRIPT LOGIC & ENGINE ================= -->
+    <script type="module">
+      /* =================================================================
+         1. DYNAMIC THREE.JS IMPORT & SOUND ENGINE (Web Audio API)
+         ================================================================= */
+      // Load Three.js safely via jsDelivr CDN
+      const THREE = await import(/* @vite-ignore */ 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js');
+
+      // Synthesized Web Audio Sound Engine (Zero external audio asset dependencies)
+      class SoundEngine {
+        constructor() {
+          this.ctx = null;
+          this.muted = false;
+        }
+
+        init() {
+          if (!this.ctx) {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (AudioContextClass) {
+              this.ctx = new AudioContextClass();
+            }
+          }
+          if (this.ctx && this.ctx.state === 'suspended') {
+            this.ctx.resume();
+          }
+        }
+
+        setMuted(muteState) {
+          this.muted = muteState;
+        }
+
+        playPop() {
+          if (this.muted) return;
+          this.init();
+          if (!this.ctx) return;
+
+          const now = this.ctx.currentTime;
+          // Short noise burst + falling sine chirp
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(440, now);
+          osc.frequency.exponentialRampToValueAtTime(70, now + 0.12);
+
+          gain.gain.setValueAtTime(0.35, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+
+          osc.start(now);
+          osc.stop(now + 0.12);
+        }
+
+        playCorrect() {
+          if (this.muted) return;
+          this.init();
+          if (!this.ctx) return;
+
+          const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6 arpeggio
+          notes.forEach((freq, i) => {
+            const now = this.ctx.currentTime + (i * 0.08);
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, now);
+
+            gain.gain.setValueAtTime(0.18, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+
+            osc.start(now);
+            osc.stop(now + 0.35);
+          });
+        }
+
+        playWrong() {
+          if (this.muted) return;
+          this.init();
+          if (!this.ctx) return;
+
+          const now = this.ctx.currentTime;
+          // Mellow two-note informative cadence (not harsh)
+          [330, 261.63].forEach((freq, i) => {
+            const time = now + (i * 0.14);
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, time);
+
+            gain.gain.setValueAtTime(0.15, time);
+            gain.gain.exponentialRampToValueAtTime(0.001, time + 0.25);
+
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+
+            osc.start(time);
+            osc.stop(time + 0.25);
+          });
+        }
+
+        playHover() {
+          if (this.muted) return;
+          this.init();
+          if (!this.ctx) return;
+
+          const now = this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(880, now);
+          osc.frequency.exponentialRampToValueAtTime(440, now + 0.04);
+
+          gain.gain.setValueAtTime(0.05, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+
+          osc.start(now);
+          osc.stop(now + 0.04);
+        }
+
+        playFanfare() {
+          if (this.muted) return;
+          this.init();
+          if (!this.ctx) return;
+
+          const chords = [523.25, 659.25, 783.99, 1046.50, 1318.51];
+          chords.forEach((freq, idx) => {
+            const now = this.ctx.currentTime + (idx * 0.1);
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(freq, now);
+
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+
+            osc.start(now);
+            osc.stop(now + 0.6);
+          });
+        }
+      }
+
+      const sounds = new SoundEngine();
+
+      /* =================================================================
+         2. DATA SOAL: 5 SOAL LENGKAP KELAS XI (Khotbah, Tabligh, Dakwah)
+         ================================================================= */
+      const QUESTIONS_DATA = [
+        {
+          id: 1,
+          pertanyaan: "Rafi diminta menyampaikan khotbah Jumat. Pernyataan yang paling tepat tentang perbedaannya dari tabligh atau ceramah umum adalah ...",
+          pilihan: [
+            { key: "A", text: "Khotbah Jumat mempunyai ketentuan dan tata pelaksanaan khusus dalam fikih; tabligh umum tidak otomatis memakai format khotbah Jumat." },
+            { key: "B", text: "Semua tabligh wajib dilakukan di masjid." },
+            { key: "C", text: "Khotbah adalah percakapan bebas tanpa konteks atau ketentuan." },
+            { key: "D", text: "Khotbah dan semua bentuk tabligh harus memiliki durasi yang sama." }
+          ],
+          kunci: "A",
+          pembahasan: "Khotbah Jumat memiliki konteks dan ketentuan pelaksanaan khusus dalam fikih (seperti rukun, syarat, waktu salat Jumat). Tabligh berarti menyampaikan ajaran, sehingga bentuk dan situasinya dapat beragam. Khotbah juga dapat menjadi sarana penyampaian pesan tabligh/dakwah, tetapi keduanya memiliki ketentuan format yang berbeda."
+        },
+        {
+          id: 2,
+          pertanyaan: "Makna tabligh yang paling tepat ialah ...",
+          pilihan: [
+            { key: "A", text: "Mengajak orang lain dengan paksaan agar segera mengikuti pendapat kita." },
+            { key: "B", text: "Menyampaikan ajaran atau nilai Islam secara jelas dan bertanggung jawab." },
+            { key: "C", text: "Menyampaikan pesan yang hanya boleh dilakukan di masjid." },
+            { key: "D", text: "Mengganti semua bentuk dakwah dengan satu jenis pidato." }
+          ],
+          kunci: "B",
+          pembahasan: "Tabligh menekankan penyampaian pesan atau ajaran Islam secara lugas, jelas, dan bertanggung jawab. Cara dan konteks penyampaiannya selalu mengedepankan kebenaran isi, kejelasan, serta adab sopan santun tanpa unsur paksaan."
+        },
+        {
+          id: 3,
+          pertanyaan: "Seorang pelajar membiasakan diri bersikap jujur, menjaga kebersihan, dan menolong warga sehingga perilaku baik itu menjadi teladan. Contoh dakwah apakah ini?",
+          pilihan: [
+            { key: "A", text: "Dakwah bil hal, yaitu mengajak kepada kebaikan melalui tindakan dan keteladanan." },
+            { key: "B", text: "Khotbah Jumat, karena setiap tindakan baik adalah khotbah." },
+            { key: "C", text: "Perdebatan, karena teladan harus memenangkan lawan bicara." },
+            { key: "D", text: "Tabligh lisan saja, karena pesan hanya dapat disampaikan melalui pidato." }
+          ],
+          kunci: "A",
+          pembahasan: "Dakwah bil hal dilakukan lewat tindakan nyata, akhlak mulia, dan keteladanan (uswah hasanah). Keteladanan mampu menyebarkan nilai kebaikan secara damai dan membekas tanpa perlu memaksakan argumen."
+        },
+        {
+          id: 4,
+          pertanyaan: "Prinsip dakwah yang dapat dipetik dari Q.S. an-Nahl [16]:125 adalah ...",
+          pilihan: [
+            { key: "A", text: "Memaksa orang lain menerima pesan secepat mungkin." },
+            { key: "B", text: "Menyerang pribadi orang yang memiliki pertanyaan." },
+            { key: "C", text: "Menyampaikan dengan hikmah, pengajaran yang baik, dan dialog dengan cara terbaik." },
+            { key: "D", text: "Menolak semua pertanyaan atau perbedaan pendapat." }
+          ],
+          kunci: "C",
+          pembahasan: "Q.S. an-Nahl [16]:125 mengajarkan tiga pilar utama: hikmah (kebijaksanaan mendalam), mau'izhah hasanah (nasihat/pengajaran yang baik), serta mujadalah bil-lati hiya ahsan (dialog atau diskusi dengan cara terbaik). Prinsip ini menegaskan dakwah yang santun, damai, dan penuh respek."
+        },
+        {
+          id: 5,
+          pertanyaan: "Pesan baik yang kamu sampaikan di grup daring tidak disetujui teman. Tindakan paling santun adalah ...",
+          pilihan: [
+            { key: "A", text: "Mempermalukannya di depan anggota grup lain." },
+            { key: "B", text: "Mengirim pesan yang sama berulang kali sampai ia menyerah." },
+            { key: "C", text: "Mengancam agar ia mengikuti pendapatmu." },
+            { key: "D", text: "Menanggapi dengan tenang, mendengarkan, memakai sumber tepercaya bila relevan, dan menghormati batas serta perbedaan." }
+          ],
+          kunci: "D",
+          pembahasan: "Dakwah yang damai pantang menggunakan tekanan, intimidasi, spam, atau mempermalukan orang lain. Sikap santun tercermin dari mendengarkan secara tulus, berargumen objektif dengan sumber tepercaya, dan senantiasa menghormati batas ruang pribadi sesama."
+        }
+      ];
+
+      /* =================================================================
+         3. APPLICATION STATE MANAGEMENT
+         ================================================================= */
+      const state = {
+        scene: 'opening', // 'opening', 'quiz', 'feedback', 'result', 'paused'
+        previousScene: 'opening',
+        cameraActive: false,
+        cameraStream: null,
+        soundEnabled: true,
+        currentQuestionIndex: 0,
+        score: 0,
+        correctCount: 0,
+        wrongCount: 0,
+        answered: false,
+        selectedChoiceKey: null,
+        hoveredBalloonIndex: -1,
+        // Gesture recognition tracking
+        handDetected: false,
+        lastGesture: 'NONE', // 'NONE', 'OPEN', 'POINT', 'PINCH', 'FIST'
+        pinchActive: false,
+        pinchTriggered: false,
+        fistHoldTimer: 0,
+        handCursor: { x: -100, y: -100, targetX: -100, targetY: -100, visible: false },
+        // Three.js interactive balloon data
+        balloonObjects: [],
+        particleBursts: []
+      };
+
+      /* =================================================================
+         4. PROCEDURAL THREE.JS 3D ENVIRONMENT
+         ================================================================= */
+      const canvas3D = document.getElementById('three-canvas');
+      const renderer = new THREE.WebGLRenderer({
+        canvas: canvas3D,
+        alpha: true,
+        antialias: true,
+        powerPreference: 'high-performance'
+      });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      const scene = new THREE.Scene();
+      const camera3D = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 100);
+      camera3D.position.set(0, 0, 7.5);
+
+      // Lighting setup for warm, friendly AR aesthetic
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+      scene.add(ambientLight);
+
+      const dirLight = new THREE.DirectionalLight(0x5eead4, 1.2);
+      dirLight.position.set(4, 6, 5);
+      scene.add(dirLight);
+
+      const warmLight = new THREE.PointLight(0xfbbf24, 1.5, 15);
+      warmLight.position.set(-3, -2, 4);
+      scene.add(warmLight);
+
+      // Thematic Procedural 3D Centerpiece
+      // 1. Stylized Mimbar (Podium) - Symbol of Khotbah
+      // 2. Open Scroll / Book - Symbol of Tabligh
+      // 3. Glowing Lanterns & Light Trail - Symbol of Dakwah
+      const centerpieceGroup = new THREE.Group();
+      scene.add(centerpieceGroup);
+
+      function createThematicCenterpiece() {
+        centerpieceGroup.clear();
+
+        // Stylized Podium (Mimbar)
+        const woodMat = new THREE.MeshStandardMaterial({
+          color: 0x0f766e,
+          roughness: 0.3,
+          metalness: 0.1,
+          emissive: 0x042f2e,
+          emissiveIntensity: 0.2
+        });
+        const goldMat = new THREE.MeshStandardMaterial({
+          color: 0xf59e0b,
+          roughness: 0.2,
+          metalness: 0.6,
+          emissive: 0x78350f,
+          emissiveIntensity: 0.2
+        });
+
+        // Podium base platform
+        const baseGeo = new THREE.CylinderGeometry(1.4, 1.6, 0.3, 16);
+        const baseMesh = new THREE.Mesh(baseGeo, woodMat);
+        baseMesh.position.set(0, -2.6, -1);
+        centerpieceGroup.add(baseMesh);
+
+        // Podium Pillar
+        const pillarGeo = new THREE.CylinderGeometry(0.5, 0.7, 1.2, 12);
+        const pillarMesh = new THREE.Mesh(pillarGeo, woodMat);
+        pillarMesh.position.set(0, -1.9, -1);
+        centerpieceGroup.add(pillarMesh);
+
+        // Top Lectern Desk
+        const deskGeo = new THREE.BoxGeometry(1.6, 0.25, 1.1);
+        const deskMesh = new THREE.Mesh(deskGeo, woodMat);
+        deskMesh.position.set(0, -1.2, -0.9);
+        deskMesh.rotation.x = 0.3;
+        centerpieceGroup.add(deskMesh);
+
+        // Gold Trim Arch on podium front
+        const archTorus = new THREE.TorusGeometry(0.35, 0.05, 12, 24, Math.PI);
+        const archMesh = new THREE.Mesh(archTorus, goldMat);
+        archMesh.position.set(0, -1.8, -0.4);
+        archMesh.rotation.z = Math.PI;
+        centerpieceGroup.add(archMesh);
+
+        // Open Scroll / Book (Tabligh symbol) atop desk
+        const scrollGeo = new THREE.CylinderGeometry(0.12, 0.12, 1.1, 16, 1, false, 0, Math.PI * 1.5);
+        const scrollMat = new THREE.MeshStandardMaterial({
+          color: 0xfef9c3,
+          roughness: 0.6,
+          emissive: 0xd97706,
+          emissiveIntensity: 0.15
+        });
+        const bookL = new THREE.Mesh(scrollGeo, scrollMat);
+        bookL.position.set(-0.35, -1.05, -0.7);
+        bookL.rotation.set(0.3, 0, -1.57);
+        centerpieceGroup.add(bookL);
+
+        const bookR = new THREE.Mesh(scrollGeo, scrollMat);
+        bookR.position.set(0.35, -1.05, -0.7);
+        bookR.rotation.set(0.3, 0, 1.57);
+        centerpieceGroup.add(bookR);
+
+        // Floating Lantern (Dakwah Light Symbol)
+        const lanternGroup = new THREE.Group();
+        const lanternGlassGeo = new THREE.OctahedronGeometry(0.38, 1);
+        const lanternGlassMat = new THREE.MeshStandardMaterial({
+          color: 0xfef08a,
+          roughness: 0.1,
+          metalness: 0.1,
+          transparent: true,
+          opacity: 0.85,
+          emissive: 0xf59e0b,
+          emissiveIntensity: 0.8
+        });
+        const lanternMesh = new THREE.Mesh(lanternGlassGeo, lanternGlassMat);
+        lanternGroup.add(lanternMesh);
+
+        // Lantern gold caps
+        const capGeo = new THREE.ConeGeometry(0.25, 0.22, 6);
+        const capTop = new THREE.Mesh(capGeo, goldMat);
+        capTop.position.y = 0.4;
+        lanternGroup.add(capTop);
+
+        const capBottom = new THREE.Mesh(capGeo, goldMat);
+        capBottom.position.y = -0.4;
+        capBottom.rotation.z = Math.PI;
+        lanternGroup.add(capBottom);
+
+        lanternGroup.position.set(1.6, -0.6, -0.5);
+        centerpieceGroup.add(lanternGroup);
+
+        // Second smaller lantern floating on the other side
+        const lanternGroup2 = lanternGroup.clone();
+        lanternGroup2.scale.set(0.7, 0.7, 0.7);
+        lanternGroup2.position.set(-1.6, -0.8, -0.5);
+        centerpieceGroup.add(lanternGroup2);
+
+        // Floating ambient dust particles (light aura)
+        const particleCount = 45;
+        const pGeo = new THREE.BufferGeometry();
+        const pPos = new Float32Array(particleCount * 3);
+        for (let i = 0; i < particleCount * 3; i += 3) {
+          pPos[i] = (Math.random() - 0.5) * 8;
+          pPos[i + 1] = (Math.random() - 0.5) * 5;
+          pPos[i + 2] = (Math.random() - 0.5) * 3;
+        }
+        pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+        const pMat = new THREE.PointsMaterial({
+          color: 0x5eead4,
+          size: 0.08,
+          transparent: true,
+          opacity: 0.6,
+          blending: THREE.AdditiveBlending
+        });
+        const particles = new THREE.Points(pGeo, pMat);
+        centerpieceGroup.add(particles);
+
+        centerpieceGroup.position.set(0, -0.3, 0);
+      }
+
+      createThematicCenterpiece();
+
+      /* =================================================================
+         5. PROCEDURAL 3D INTERACTIVE BALLOONS
+         ================================================================= */
+      const balloonsGroup = new THREE.Group();
+      scene.add(balloonsGroup);
+
+      // Colors for the 4 balloons (High contrast, vibrant teal/green/amber/coral palette)
+      const BALLOON_COLOR_PALETTES = [
+        { hex: 0x06b6d4, emissive: 0x083344, border: '#06b6d4', name: 'Biru Teal' },
+        { hex: 0x10b981, emissive: 0x064e3b, border: '#10b981', name: 'Hijau Emerald' },
+        { hex: 0xf59e0b, emissive: 0x451a03, border: '#f59e0b', name: 'Kuning Emas' },
+        { hex: 0xf43f5e, emissive: 0x4c0519, border: '#f43f5e', name: 'Merah Coral' }
+      ];
+
+      // Generate Crisp 2D Canvas Texture for balloon label (Letter A, B, C, D)
+      function createBalloonLabelTexture(letter, colorHexStr) {
+        const c = document.createElement('canvas');
+        c.width = 256;
+        c.height = 256;
+        const ctx = c.getContext('2d');
+
+        // Circular background badge
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+        ctx.beginPath();
+        ctx.arc(128, 128, 110, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.lineWidth = 14;
+        ctx.strokeStyle = colorHexStr;
+        ctx.stroke();
+
+        // Letter text
+        ctx.font = 'bold 120px sans-serif';
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(letter, 128, 130);
+
+        const tex = new THREE.CanvasTexture(c);
+        tex.needsUpdate = true;
+        return tex;
+      }
+
+      // 3D Balloon Geometry: Sphere with bottom vertex taper + knot + string
+      function buildBalloonMesh(palette, letter) {
+        const balloonObj = new THREE.Group();
+
+        // Balloon Body: Modified Sphere
+        const bodyGeo = new THREE.SphereGeometry(0.75, 28, 24);
+        // Taper bottom vertices slightly for authentic teardrop balloon shape
+        const posAttr = bodyGeo.attributes.position;
+        for (let i = 0; i < posAttr.count; i++) {
+          const y = posAttr.getY(i);
+          if (y < 0) {
+            const factor = 1 + y * 0.35;
+            posAttr.setX(i, posAttr.getX(i) * factor);
+            posAttr.setZ(i, posAttr.getZ(i) * factor);
+          }
+        }
+        bodyGeo.computeVertexNormals();
+
+        const bodyMat = new THREE.MeshStandardMaterial({
+          color: palette.hex,
+          roughness: 0.25,
+          metalness: 0.15,
+          emissive: palette.emissive,
+          emissiveIntensity: 0.3,
+          transparent: true,
+          opacity: 0.95
+        });
+
+        const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+        balloonObj.add(bodyMesh);
+
+        // Knot at bottom
+        const knotGeo = new THREE.ConeGeometry(0.12, 0.16, 12);
+        const knotMesh = new THREE.Mesh(knotGeo, bodyMat);
+        knotMesh.position.y = -0.8;
+        knotMesh.rotation.x = Math.PI;
+        balloonObj.add(knotMesh);
+
+        // Swaying string
+        const curve = new THREE.QuadraticBezierCurve3(
+          new THREE.Vector3(0, -0.85, 0),
+          new THREE.Vector3(0.08, -1.3, 0),
+          new THREE.Vector3(-0.04, -1.8, 0)
+        );
+        const stringGeo = new THREE.TubeGeometry(curve, 16, 0.015, 6, false);
+        const stringMat = new THREE.MeshBasicMaterial({ color: 0xe2e8f0 });
+        const stringMesh = new THREE.Mesh(stringGeo, stringMat);
+        balloonObj.add(stringMesh);
+
+        // Front Letter Badge Billboard
+        const badgeTex = createBalloonLabelTexture(letter, palette.border);
+        const badgeGeo = new THREE.PlaneGeometry(0.68, 0.68);
+        const badgeMat = new THREE.MeshBasicMaterial({
+          map: badgeTex,
+          transparent: true,
+          depthWrite: false
+        });
+        const badgeMesh = new THREE.Mesh(badgeGeo, badgeMat);
+        badgeMesh.position.set(0, 0.1, 0.72);
+        balloonObj.add(badgeMesh);
+
+        return {
+          group: balloonObj,
+          bodyMesh: bodyMesh,
+          badgeMesh: badgeMesh,
+          material: bodyMat,
+          baseScale: 1.0,
+          currentScale: 1.0,
+          targetScale: 1.0,
+          palette: palette,
+          letter: letter,
+          basePos: new THREE.Vector3(),
+          floatOffset: Math.random() * 10
+        };
+      }
+
+      // Layout 4 balloons in 3D AR space
+      function setupBalloonsForCurrentQuestion() {
+        balloonsGroup.clear();
+        state.balloonObjects = [];
+
+        const q = QUESTIONS_DATA[state.currentQuestionIndex];
+        
+        // Randomize 3D position slots so choices have dynamic placement
+        const baseSlots = [
+          { x: -2.7, y: 1.3, z: 0.1 },  // Top Left
+          { x: -0.9, y: 1.7, z: -0.2 }, // Top Center-Left
+          { x: 0.9, y: 1.7, z: -0.2 },  // Top Center-Right
+          { x: 2.7, y: 1.3, z: 0.1 }    // Top Right
+        ];
+        
+        // Responsive adjustment for narrower portrait screens
+        const isNarrow = window.innerWidth < 640;
+        if (isNarrow) {
+          baseSlots[0] = { x: -1.4, y: 1.9, z: 0.0 };
+          baseSlots[1] = { x: 1.4, y: 1.9, z: 0.0 };
+          baseSlots[2] = { x: -1.4, y: 0.4, z: 0.2 };
+          baseSlots[3] = { x: 1.4, y: 0.4, z: 0.2 };
+        }
+
+        // Shuffle slot assignments
+        const shuffledSlots = [...baseSlots].sort(() => Math.random() - 0.5);
+
+        q.pilihan.forEach((choice, idx) => {
+          const palette = BALLOON_COLOR_PALETTES[idx % BALLOON_COLOR_PALETTES.length];
+          const bData = buildBalloonMesh(palette, choice.key);
+          const slot = shuffledSlots[idx];
+
+          bData.basePos.set(slot.x, slot.y, slot.z);
+          bData.group.position.copy(bData.basePos);
+          bData.choiceKey = choice.key;
+          bData.choiceIndex = idx;
+
+          balloonsGroup.add(bData.group);
+          state.balloonObjects.push(bData);
+        });
+
+        // Sync HTML choice buttons
+        renderOptionsUI(q);
+      }
+
+      // Particle Burst Effect on Balloon Pop
+      function triggerBalloonPopParticles(pos, colorHex) {
+        const count = 36;
+        const geom = new THREE.BufferGeometry();
+        const positions = new Float32Array(count * 3);
+        const velocities = [];
+
+        for (let i = 0; i < count; i++) {
+          positions[i * 3] = pos.x;
+          positions[i * 3 + 1] = pos.y;
+          positions[i * 3 + 2] = pos.z;
+
+          const theta = Math.random() * Math.PI * 2;
+          const phi = (Math.random() - 0.5) * Math.PI;
+          const speed = 0.05 + Math.random() * 0.12;
+
+          velocities.push({
+            x: Math.cos(theta) * Math.cos(phi) * speed,
+            y: Math.sin(phi) * speed + 0.02,
+            z: Math.sin(theta) * Math.cos(phi) * speed
+          });
+        }
+
+        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const mat = new THREE.PointsMaterial({
+          color: colorHex,
+          size: 0.14,
+          transparent: true,
+          opacity: 1.0,
+          blending: THREE.AdditiveBlending
+        });
+
+        const pMesh = new THREE.Points(geom, mat);
+        scene.add(pMesh);
+
+        state.particleBursts.push({
+          mesh: pMesh,
+          velocities: velocities,
+          life: 1.0,
+          decay: 0.03
+        });
+      }
+
+      /* =================================================================
+         6. MEDIAPIPE HANDS & GESTURE RECOGNITION PIPELINE
+         ================================================================= */
+      let mpHands = null;
+      let mpCamera = null;
+      const webcamVideo = document.getElementById('webcam-video');
+      const gestureCanvas = document.getElementById('gesture-canvas');
+      const gestureCtx = gestureCanvas.getContext('2d');
+      const handCursorEl = document.getElementById('hand-cursor');
+      const cursorRingEl = document.getElementById('cursor-ring');
+      const cursorBadgeEl = document.getElementById('cursor-badge');
+
+      function resizeCanvases() {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        renderer.setSize(w, h);
+        camera3D.aspect = w / h;
+        camera3D.updateProjectionMatrix();
+
+        gestureCanvas.width = w;
+        gestureCanvas.height = h;
+
+        // Re-adjust balloon slots on orientation shift
+        if (state.scene === 'quiz' && state.balloonObjects.length > 0) {
+          const isNarrow = w < 640;
+          state.balloonObjects.forEach((bData, idx) => {
+            if (isNarrow) {
+              const offsets = [
+                { x: -1.3, y: 1.8 },
+                { x: 1.3, y: 1.8 },
+                { x: -1.3, y: 0.3 },
+                { x: 1.3, y: 0.3 }
+              ];
+              bData.basePos.x = offsets[idx % 4].x;
+              bData.basePos.y = offsets[idx % 4].y;
+            }
+          });
+        }
+      }
+
+      window.addEventListener('resize', resizeCanvases);
+      resizeCanvases();
+
+      // Euclidean distance helper for MediaPipe landmarks
+      function dist2D(p1, p2) {
+        return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+      }
+      function dist3D(p1, p2) {
+        return Math.hypot(p1.x - p2.x, p1.y - p2.y, (p1.z || 0) - (p2.z || 0));
+      }
+
+      // Gesture Classification Algorithm
+      function classifyHandGesture(landmarks) {
+        if (!landmarks || landmarks.length < 21) return 'NONE';
+
+        const wrist = landmarks[0];
+        const thumbTip = landmarks[4];
+        const indexTip = landmarks[8];
+        const middleTip = landmarks[12];
+        const ringTip = landmarks[16];
+        const pinkyTip = landmarks[20];
+
+        const indexPip = landmarks[6];
+        const middlePip = landmarks[10];
+        const ringPip = landmarks[14];
+        const pinkyPip = landmarks[18];
+
+        const indexMcp = landmarks[5];
+        const middleMcp = landmarks[9];
+
+        // Hand scale reference (wrist to middle MCP)
+        const handScale = Math.max(0.1, dist2D(wrist, middleMcp));
+
+        // 1. PINCH DETECTOR: Distance between thumb tip and index tip
+        const pinchDistance = dist2D(thumbTip, indexTip) / handScale;
+        const isPinching = pinchDistance < 0.32;
+
+        // 2. FIST DETECTOR: All finger tips curled near MCP / wrist
+        const indexCurled = dist2D(indexTip, wrist) < dist2D(indexPip, wrist) * 1.15;
+        const middleCurled = dist2D(middleTip, wrist) < dist2D(middlePip, wrist) * 1.15;
+        const ringCurled = dist2D(ringTip, wrist) < dist2D(ringPip, wrist) * 1.15;
+        const pinkyCurled = dist2D(pinkyTip, wrist) < dist2D(pinkyPip, wrist) * 1.15;
+        const isFist = indexCurled && middleCurled && ringCurled && pinkyCurled && !isPinching;
+
+        // 3. POINTING DETECTOR: Index extended, other fingers curled
+        const indexExtended = dist2D(indexTip, wrist) > dist2D(indexPip, wrist) * 1.25;
+        const middleExtended = dist2D(middleTip, wrist) > dist2D(middlePip, wrist) * 1.25;
+        const ringExtended = dist2D(ringTip, wrist) > dist2D(ringPip, wrist) * 1.25;
+        const pinkyExtended = dist2D(pinkyTip, wrist) > dist2D(pinkyPip, wrist) * 1.25;
+
+        const isPointing = indexExtended && !middleExtended && !ringExtended && !pinkyExtended;
+
+        // 4. OPEN HAND DETECTOR: All 4 main fingers extended
+        const isOpenHand = indexExtended && middleExtended && ringExtended && pinkyExtended;
+
+        if (isPinching) return 'PINCH';
+        if (isFist) return 'FIST';
+        if (isPointing) return 'POINT';
+        if (isOpenHand) return 'OPEN';
+
+        // Default to pointing if index is reasonably up
+        if (indexExtended) return 'POINT';
+        return 'OPEN';
+      }
+
+      // Raycasting from Screen Cursor to 3D Balloons
+      const raycaster = new THREE.Raycaster();
+      const pointerVec = new THREE.Vector2();
+
+      function updateHoverAndSelectionFromScreen(screenX, screenY, triggerAction = false) {
+        if (state.scene !== 'quiz' || state.answered) return;
+
+        // Convert Screen Coordinates to Normalized Device Coordinates (-1 to +1)
+        pointerVec.x = (screenX / window.innerWidth) * 2 - 1;
+        pointerVec.y = -(screenY / window.innerHeight) * 2 + 1;
+
+        raycaster.setFromCamera(pointerVec, camera3D);
+
+        // Check intersections with all balloon meshes
+        const targetMeshes = state.balloonObjects.map(b => b.bodyMesh);
+        const intersects = raycaster.intersectObjects(targetMeshes, false);
+
+        let hitIndex = -1;
+        if (intersects.length > 0) {
+          const hitMesh = intersects[0].object;
+          hitIndex = state.balloonObjects.findIndex(b => b.bodyMesh === hitMesh);
+        }
+
+        // Apply hover highlight
+        state.hoveredBalloonIndex = hitIndex;
+        state.balloonObjects.forEach((bData, idx) => {
+          if (idx === hitIndex) {
+            bData.targetScale = 1.18;
+            bData.material.emissiveIntensity = 0.7;
+          } else {
+            bData.targetScale = 1.0;
+            bData.material.emissiveIntensity = 0.3;
+          }
+        });
+
+        // Sync visual highlight on HTML buttons
+        syncHtmlOptionHighlight(hitIndex);
+
+        // If triggerAction (Pinch edge trigger or mouse/touch click)
+        if (triggerAction && hitIndex !== -1) {
+          const selectedChoice = state.balloonObjects[hitIndex].choiceKey;
+          selectAnswer(selectedChoice, hitIndex);
+        }
+      }
+
+      function syncHtmlOptionHighlight(hoveredIdx) {
+        const buttons = document.querySelectorAll('.option-choice-btn');
+        buttons.forEach((btn, idx) => {
+          if (idx === hoveredIdx) {
+            btn.classList.add('ring-2', 'ring-emerald-400', 'bg-emerald-950/60');
+          } else {
+            btn.classList.remove('ring-2', 'ring-emerald-400', 'bg-emerald-950/60');
+          }
+        });
+      }
+
+      // MediaPipe Results Callback
+      function onMediaPipeResults(results) {
+        gestureCtx.clearRect(0, 0, gestureCanvas.width, gestureCanvas.height);
+
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+          state.handDetected = true;
+          const landmarks = results.multiHandLandmarks[0];
+
+          // Mirror X for selfie mode: (1 - x)
+          const indexTip = landmarks[8];
+          const cursorPixelX = (1 - indexTip.x) * window.innerWidth;
+          const cursorPixelY = indexTip.y * window.innerHeight;
+
+          // Smooth Cursor movement (Exponential Moving Average / Lerp)
+          state.handCursor.targetX = cursorPixelX;
+          state.handCursor.targetY = cursorPixelY;
+          state.handCursor.x += (state.handCursor.targetX - state.handCursor.x) * 0.45;
+          state.handCursor.y += (state.handCursor.targetY - state.handCursor.y) * 0.45;
+          state.handCursor.visible = true;
+
+          // Update Virtual Hand Cursor UI
+          handCursorEl.classList.remove('hidden');
+          handCursorEl.style.left = `${state.handCursor.x}px`;
+          handCursorEl.style.top = `${state.handCursor.y}px`;
+
+          // Classify gesture
+          const currentGesture = classifyHandGesture(landmarks);
+          state.lastGesture = currentGesture;
+
+          // Update gesture badge
+          updateGestureStatusUI(currentGesture);
+
+          // Handle GESTURES:
+          if (currentGesture === 'PINCH') {
+            cursorRingEl.classList.add('border-amber-400', 'bg-amber-500/30', 'scale-90');
+            cursorRingEl.classList.remove('border-emerald-400/80', 'bg-emerald-500/20');
+            cursorBadgeEl.textContent = 'Mencubit (Pinch)';
+
+            // Edge trigger: Only trigger once per pinch until released
+            if (!state.pinchActive && !state.pinchTriggered) {
+              state.pinchActive = true;
+              state.pinchTriggered = true;
+              updateHoverAndSelectionFromScreen(state.handCursor.x, state.handCursor.y, true);
+            }
+          } else {
+            // Finger released
+            state.pinchActive = false;
+            state.pinchTriggered = false;
+            cursorRingEl.classList.remove('border-amber-400', 'bg-amber-500/30', 'scale-90');
+            cursorRingEl.classList.add('border-emerald-400/80', 'bg-emerald-500/20');
+
+            if (currentGesture === 'POINT') {
+              cursorBadgeEl.textContent = 'Menunjuk Balon';
+              updateHoverAndSelectionFromScreen(state.handCursor.x, state.handCursor.y, false);
+            } else if (currentGesture === 'OPEN') {
+              cursorBadgeEl.textContent = 'Tangan Terbuka';
+              // If on opening scene, start quiz!
+              if (state.scene === 'opening') {
+                startGameWithCamera();
+              } else if (state.scene === 'paused') {
+                resumeGame();
+              }
+            } else if (currentGesture === 'FIST') {
+              cursorBadgeEl.textContent = 'Mengepal (Jeda)';
+              // Fist pause hold debounce
+              state.fistHoldTimer += 1;
+              if (state.fistHoldTimer > 25 && state.scene === 'quiz') {
+                pauseGame();
+                state.fistHoldTimer = 0;
+              }
+            }
+          }
+
+          // Optional: Draw lightweight subtle skeleton lines on gestureCanvas
+          drawHandSkeleton(landmarks, gestureCtx);
+
+        } else {
+          // Hand lost
+          state.handDetected = false;
+          state.handCursor.visible = false;
+          handCursorEl.classList.add('hidden');
+          state.fistHoldTimer = 0;
+          updateGestureStatusUI('NONE');
+        }
+      }
+
+      function drawHandSkeleton(landmarks, ctx) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.45)';
+        ctx.lineWidth = 2.5;
+
+        // Landmarks connections (Pinch connection line between 4 and 8)
+        const pThumb = { x: (1 - landmarks[4].x) * window.innerWidth, y: landmarks[4].y * window.innerHeight };
+        const pIndex = { x: (1 - landmarks[8].x) * window.innerWidth, y: landmarks[8].y * window.innerHeight };
+
+        ctx.beginPath();
+        ctx.moveTo(pThumb.x, pThumb.y);
+        ctx.lineTo(pIndex.x, pIndex.y);
+        ctx.stroke();
+
+        // Small glowing dot on index fingertip
+        ctx.fillStyle = '#34d399';
+        ctx.beginPath();
+        ctx.arc(pIndex.x, pIndex.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+      function updateGestureStatusUI(gesture) {
+        const liveTipEl = document.getElementById('gesture-instruction-text');
+        const helperBanner = document.getElementById('gesture-helper-banner');
+        if (!liveTipEl) return;
+
+        switch (gesture) {
+          case 'POINT':
+            liveTipEl.textContent = 'Menunjuk: Arahkan ke balon target';
+            if (helperBanner) helperBanner.classList.add('hidden');
+            break;
+          case 'PINCH':
+            liveTipEl.textContent = 'Cubit terdeteksi! Memecahkan balon...';
+            break;
+          case 'OPEN':
+            liveTipEl.textContent = 'Tangan Terbuka';
+            break;
+          case 'FIST':
+            liveTipEl.textContent = 'Mengepal: Tahan untuk menjeda';
+            break;
+          default:
+            liveTipEl.textContent = state.cameraActive 
+              ? 'Arahkan telunjuk ke kamera' 
+              : 'Mode Manual: Klik / Sentuh balon';
+            if (helperBanner && state.cameraActive && state.scene === 'quiz') {
+              helperBanner.classList.remove('hidden');
+            }
+            break;
+        }
+      }
+
+      // Initialize MediaPipe Hands instance
+      async function initMediaPipeHands() {
+        if (typeof window.Hands === 'undefined') {
+          console.warn('MediaPipe Hands script not ready or unavailable.');
+          return false;
+        }
+
+        try {
+          mpHands = new window.Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+          });
+
+          mpHands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.55,
+            minTrackingConfidence: 0.55
+          });
+
+          mpHands.onResults(onMediaPipeResults);
+          return true;
+        } catch (err) {
+          console.error('Gagal inisialisasi MediaPipe Hands:', err);
+          return false;
+        }
+      }
+
+      // Request and start Camera AR stream
+      async function startCameraAR() {
+        showToast('Meminta izin kamera untuk AR...');
+
+        try {
+          if (!mpHands) {
+            const ok = await initMediaPipeHands();
+            if (!ok) throw new Error('CDN MediaPipe belum siap');
+          }
+
+          if (typeof window.Camera === 'undefined') {
+            throw new Error('Camera utils tidak tersedia');
+          }
+
+          webcamVideo.classList.remove('hidden');
+          document.getElementById('ambient-bg').classList.add('opacity-40');
+
+          mpCamera = new window.Camera(webcamVideo, {
+            onFrame: async () => {
+              if (mpHands && webcamVideo.readyState >= 2) {
+                await mpHands.send({ image: webcamVideo });
+              }
+            },
+            width: 1280,
+            height: 720
+          });
+
+          await mpCamera.start();
+          state.cameraActive = true;
+          updateCamStatusUI(true);
+          showToast('Kamera AR Aktif! Arahkan telunjuk ke layar.');
+          return true;
+        } catch (err) {
+          console.warn('Akses kamera tidak dapat diaktifkan:', err);
+          state.cameraActive = false;
+          updateCamStatusUI(false);
+          webcamVideo.classList.add('hidden');
+          document.getElementById('ambient-bg').classList.remove('opacity-40');
+          showToast('Kamera tidak tersedia. Mode manual diaktifkan!');
+          return false;
+        }
+      }
+
+      function stopCameraAR() {
+        if (mpCamera) {
+          try {
+            mpCamera.stop();
+          } catch (e) {}
+          mpCamera = null;
+        }
+        state.cameraActive = false;
+        webcamVideo.classList.add('hidden');
+        document.getElementById('ambient-bg').classList.remove('opacity-40');
+        updateCamStatusUI(false);
+        if (handCursorEl) handCursorEl.classList.add('hidden');
+      }
+
+      function updateCamStatusUI(isActive) {
+        const dot = document.getElementById('cam-status-dot');
+        const lbl = document.getElementById('cam-label');
+        if (isActive) {
+          dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+          lbl.textContent = 'AR: Kamera Aktif';
+        } else {
+          dot.className = 'w-2 h-2 rounded-full bg-slate-400';
+          lbl.textContent = 'Mode Manual';
+        }
+      }
+
+      /* =================================================================
+         7. GAME FLOW: QUIZ LOGIC, EVALUATION, FEEDBACK
+         ================================================================= */
+      function renderOptionsUI(q) {
+        const container = document.getElementById('options-container');
+        container.innerHTML = '';
+
+        q.pilihan.forEach((choice, idx) => {
+          const btn = document.createElement('button');
+          btn.className = 'option-choice-btn flex items-start gap-3 p-3.5 sm:p-4 rounded-2xl bg-slate-900/80 hover:bg-slate-800/90 text-left border border-slate-700 hover:border-emerald-500/60 backdrop-blur-md transition-all shadow-md group cursor-pointer';
+          btn.setAttribute('data-choice-key', choice.key);
+          btn.setAttribute('data-index', idx);
+
+          const badge = document.createElement('span');
+          badge.className = 'w-8 h-8 rounded-xl bg-emerald-500/20 group-hover:bg-emerald-500/30 text-emerald-300 font-extrabold flex items-center justify-center shrink-0 border border-emerald-500/40 text-sm transition-colors';
+          badge.textContent = choice.key;
+
+          const textSpan = document.createElement('span');
+          textSpan.className = 'text-xs sm:text-sm text-slate-200 group-hover:text-white leading-snug flex-1';
+          textSpan.textContent = choice.text;
+
+          btn.appendChild(badge);
+          btn.appendChild(textSpan);
+
+          btn.addEventListener('click', () => {
+            sounds.playHover();
+            selectAnswer(choice.key, idx);
+          });
+
+          container.appendChild(btn);
+        });
+
+        // Update Question text & HUD
+        document.getElementById('question-text').textContent = q.pertanyaan;
+        document.getElementById('badge-question-num').textContent = `Soal ${state.currentQuestionIndex + 1} / 5`;
+        document.getElementById('val-score').textContent = state.score;
+        document.getElementById('val-correct').textContent = state.correctCount;
+        document.getElementById('val-wrong').textContent = state.wrongCount;
+
+        const progressPercent = ((state.currentQuestionIndex + 1) / 5) * 100;
+        document.getElementById('quiz-progress-bar').style.width = `${progressPercent}%`;
+
+        state.answered = false;
+        state.selectedChoiceKey = null;
+      }
+
+      function selectAnswer(choiceKey, balloonIdx) {
+        if (state.answered) return; // Prevent double answering
+        state.answered = true;
+        state.selectedChoiceKey = choiceKey;
+
+        const q = QUESTIONS_DATA[state.currentQuestionIndex];
+        const isCorrect = (choiceKey === q.kunci);
+
+        // Sound effect
+        sounds.playPop();
+
+        // 3D Balloon Popping Effect
+        if (balloonIdx >= 0 && balloonIdx < state.balloonObjects.length) {
+          const b = state.balloonObjects[balloonIdx];
+          triggerBalloonPopParticles(b.group.position, b.palette.hex);
+          // Scale down popped balloon rapidly
+          b.targetScale = 0.001;
+        }
+
+        // Fade remaining balloons
+        state.balloonObjects.forEach((b, idx) => {
+          if (idx !== balloonIdx) {
+            b.targetScale = 0.4;
+            b.material.opacity = 0.4;
+          }
+        });
+
+        // Score Calculation (+10 for correct, 0 for incorrect)
+        if (isCorrect) {
+          state.score += 10;
+          state.correctCount += 1;
+          setTimeout(() => sounds.playCorrect(), 150);
+        } else {
+          state.wrongCount += 1;
+          setTimeout(() => sounds.playWrong(), 150);
+        }
+
+        // Update HUD numbers
+        document.getElementById('val-score').textContent = state.score;
+        document.getElementById('val-correct').textContent = state.correctCount;
+        document.getElementById('val-wrong').textContent = state.wrongCount;
+
+        // Open Feedback Modal after brief moment for pop animation
+        setTimeout(() => {
+          openFeedbackModal(isCorrect, q, choiceKey);
+        }, 550);
+      }
+
+      function openFeedbackModal(isCorrect, q, chosenKey) {
+        state.scene = 'feedback';
+        const modal = document.getElementById('modal-feedback');
+        const card = document.getElementById('feedback-card');
+        const iconBox = document.getElementById('feedback-icon-box');
+        const titleEl = document.getElementById('feedback-title');
+        const subEl = document.getElementById('feedback-subtitle');
+        const correctAnsEl = document.getElementById('feedback-correct-answer');
+        const explEl = document.getElementById('feedback-explanation');
+        const nextBtn = document.getElementById('btn-next-question');
+
+        // Find correct choice text
+        const correctChoiceObj = q.pilihan.find(p => p.key === q.kunci);
+        correctAnsEl.textContent = `${q.kunci}. ${correctChoiceObj ? correctChoiceObj.text : ''}`;
+        explEl.textContent = q.pembahasan;
+
+        if (isCorrect) {
+          iconBox.className = 'w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 flex items-center justify-center text-2xl font-bold';
+          iconBox.textContent = '✓';
+          titleEl.textContent = 'Jawaban Tepat! (+10)';
+          titleEl.className = 'text-xl sm:text-2xl font-extrabold text-emerald-400';
+          subEl.textContent = 'Sangat baik! Pilihanmu selaras dengan prinsip dakwah damai.';
+        } else {
+          iconBox.className = 'w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/50 flex items-center justify-center text-2xl font-bold';
+          iconBox.textContent = '✗';
+          titleEl.textContent = 'Belum Tepat (0)';
+          titleEl.className = 'text-xl sm:text-2xl font-extrabold text-rose-400';
+          subEl.textContent = `Pilihanmu: ${chosenKey}. Mari cermati rujukan dan pembahasannya di bawah:`;
+        }
+
+        const isLast = (state.currentQuestionIndex >= QUESTIONS_DATA.length - 1);
+        nextBtn.innerHTML = isLast 
+          ? '<span>Lihat Hasil Akhir Misi 🏆</span>' 
+          : '<span>Lanjut ke Soal Berikutnya ➔</span>';
+
+        modal.classList.remove('hidden');
+        setTimeout(() => {
+          card.classList.remove('scale-95', 'opacity-0');
+          card.classList.add('scale-100', 'opacity-100');
+        }, 30);
+      }
+
+      function closeFeedbackModal() {
+        const modal = document.getElementById('modal-feedback');
+        const card = document.getElementById('feedback-card');
+        card.classList.remove('scale-100', 'opacity-100');
+        card.classList.add('scale-95', 'opacity-0');
+        setTimeout(() => {
+          modal.classList.add('hidden');
+        }, 200);
+      }
+
+      function nextQuestion() {
+        closeFeedbackModal();
+        if (state.currentQuestionIndex < QUESTIONS_DATA.length - 1) {
+          state.currentQuestionIndex++;
+          state.scene = 'quiz';
+          setupBalloonsForCurrentQuestion();
+        } else {
+          showResultsScreen();
+        }
+      }
+
+      function showResultsScreen() {
+        state.scene = 'result';
+        sounds.playFanfare();
+
+        document.getElementById('scene-quiz').classList.add('hidden');
+        document.getElementById('scene-result').classList.remove('hidden');
+        document.getElementById('btn-pause-toggle').classList.add('hidden');
+
+        const finalScore = state.score;
+        document.getElementById('final-score').textContent = finalScore;
+        document.getElementById('final-correct').textContent = state.correctCount;
+        document.getElementById('final-wrong').textContent = state.wrongCount;
+
+        const accuracy = Math.round((state.correctCount / 5) * 100);
+        document.getElementById('final-accuracy').textContent = `${accuracy}%`;
+
+        // Motivational Reflection tailored without shaming
+        const headlineEl = document.getElementById('result-headline');
+        const subtextEl = document.getElementById('result-subtext');
+        const refEl = document.getElementById('result-reflection');
+
+        if (finalScore === 50) {
+          headlineEl.textContent = 'Mumtaz! Luar Biasa!';
+          subtextEl.textContent = 'Pemahamanmu sempurna! Kamu siap menjadi teladan dalam menyebarkan nilai Islam dengan santun dan damai.';
+          refEl.textContent = 'Kamu memahami secara mendalam perbedaan ketentuan fikih khotbah Jumat, keluwesan tabligh, keutamaan dakwah bil hal (keteladanan nyata), serta pilar Q.S. an-Nahl [16]:125: hikmah, nasihat baik, dan dialog damai.';
+        } else if (finalScore >= 30) {
+          headlineEl.textContent = 'Bagus Sekali!';
+          subtextEl.textContent = 'Pemahamanmu sudah sangat baik dalam mengutamakan adab, keteladanan, dan kebijaksanaan.';
+          refEl.textContent = 'Pertahankan sikap santun dan terus perdalam perbedaan konteks pelaksanaan khotbah serta keragaman sarana tabligh dalam kehidupan sehari-hari.';
+        } else {
+          headlineEl.textContent = 'Tetap Semangat Belajar!';
+          subtextEl.textContent = 'Setiap pembelajaran adalah proses berharga untuk meneladani akhlak yang mulia.';
+          refEl.textContent = 'Ingat selalu pesan Q.S. an-Nahl [16]:125: serulah dengan hikmah, pengajaran yang baik, dan dialog terbaik. Hindari paksaan atau perundungan.';
+        }
+
+        // Adjust Centerpiece for celebratory podium view
+        centerpieceGroup.position.set(0, -0.6, 0);
+        balloonsGroup.clear();
+      }
+
+      function resetGame() {
+        state.currentQuestionIndex = 0;
+        state.score = 0;
+        state.correctCount = 0;
+        state.wrongCount = 0;
+        state.answered = false;
+        state.selectedChoiceKey = null;
+        state.hoveredBalloonIndex = -1;
+
+        document.getElementById('scene-result').classList.add('hidden');
+        document.getElementById('scene-quiz').classList.remove('hidden');
+        document.getElementById('btn-pause-toggle').classList.remove('hidden');
+
+        state.scene = 'quiz';
+        setupBalloonsForCurrentQuestion();
+      }
+
+      function pauseGame() {
+        if (state.scene !== 'quiz') return;
+        state.previousScene = state.scene;
+        state.scene = 'paused';
+        document.getElementById('modal-pause').classList.remove('hidden');
+      }
+
+      function resumeGame() {
+        document.getElementById('modal-pause').classList.add('hidden');
+        state.scene = state.previousScene || 'quiz';
+      }
+
+      function quitToHome() {
+        document.getElementById('modal-pause').classList.add('hidden');
+        document.getElementById('scene-quiz').classList.add('hidden');
+        document.getElementById('scene-result').classList.add('hidden');
+        document.getElementById('scene-opening').classList.remove('hidden');
+        document.getElementById('btn-pause-toggle').classList.add('hidden');
+        state.scene = 'opening';
+        balloonsGroup.clear();
+      }
+
+      /* =================================================================
+         8. USER ACTIONS & EVENT LISTENERS
+         ================================================================= */
+      async function startGameWithCamera() {
+        sounds.init();
+        const success = await startCameraAR();
+        startQuizScene();
+      }
+
+      function startGameManual() {
+        sounds.init();
+        stopCameraAR();
+        updateCamStatusUI(false);
+        showToast('Mode manual diaktifkan (Klik, Sentuh & Keyboard).');
+        startQuizScene();
+      }
+
+      function startQuizScene() {
+        state.scene = 'quiz';
+        document.getElementById('scene-opening').classList.add('hidden');
+        document.getElementById('scene-quiz').classList.remove('hidden');
+        document.getElementById('btn-pause-toggle').classList.remove('hidden');
+        setupBalloonsForCurrentQuestion();
+      }
+
+      // UI Buttons Bindings
+      document.getElementById('btn-start-camera').addEventListener('click', startGameWithCamera);
+      document.getElementById('btn-start-manual').addEventListener('click', startGameManual);
+      document.getElementById('btn-next-question').addEventListener('click', () => {
+        sounds.playHover();
+        nextQuestion();
+      });
+      document.getElementById('btn-play-again').addEventListener('click', () => {
+        sounds.playHover();
+        resetGame();
+      });
+      document.getElementById('btn-pause-toggle').addEventListener('click', () => {
+        sounds.playHover();
+        pauseGame();
+      });
+      document.getElementById('btn-resume').addEventListener('click', () => {
+        sounds.playHover();
+        resumeGame();
+      });
+      document.getElementById('btn-quit-to-home').addEventListener('click', () => {
+        sounds.playHover();
+        quitToHome();
+      });
+
+      // Sound Mute Toggle
+      const btnSound = document.getElementById('btn-sound-toggle');
+      const soundIcon = document.getElementById('sound-icon');
+      const soundLabel = document.getElementById('sound-label');
+
+      btnSound.addEventListener('click', () => {
+        state.soundEnabled = !state.soundEnabled;
+        sounds.setMuted(!state.soundEnabled);
+        if (state.soundEnabled) {
+          soundIcon.textContent = '🔊';
+          soundLabel.textContent = 'Suara: Nyala';
+          showToast('Suara Diaktifkan');
+        } else {
+          soundIcon.textContent = '🔇';
+          soundLabel.textContent = 'Suara: Bisu';
+          showToast('Suara Dibisukan');
+        }
+      });
+
+      // Camera Toggle Button in Header
+      document.getElementById('btn-cam-toggle').addEventListener('click', async () => {
+        if (state.cameraActive) {
+          stopCameraAR();
+          showToast('Kamera dimatikan. Beralih ke mode manual.');
+        } else {
+          await startCameraAR();
+        }
+      });
+
+      // Mouse & Touch Input on 3D Canvas
+      canvas3D.addEventListener('pointermove', (e) => {
+        if (!state.cameraActive || !state.handDetected) {
+          updateHoverAndSelectionFromScreen(e.clientX, e.clientY, false);
+        }
+      });
+
+      canvas3D.addEventListener('pointerdown', (e) => {
+        sounds.init();
+        if (state.scene === 'quiz') {
+          updateHoverAndSelectionFromScreen(e.clientX, e.clientY, true);
+        }
+      });
+
+      // Keyboard Controls (Accessibility)
+      window.addEventListener('keydown', (e) => {
+        const key = e.key.toUpperCase();
+
+        // Sound Toggle (M)
+        if (key === 'M') {
+          btnSound.click();
+          return;
+        }
+
+        // Pause Toggle (P or Escape)
+        if (key === 'P' || key === 'ESCAPE') {
+          if (state.scene === 'quiz') {
+            pauseGame();
+          } else if (state.scene === 'paused') {
+            resumeGame();
+          }
+          return;
+        }
+
+        // Enter or Space to proceed
+        if (e.key === 'Enter' || e.key === ' ') {
+          if (state.scene === 'feedback') {
+            e.preventDefault();
+            nextQuestion();
+            return;
+          }
+          if (state.scene === 'opening') {
+            e.preventDefault();
+            startGameManual();
+            return;
+          }
+          if (state.scene === 'result') {
+            e.preventDefault();
+            resetGame();
+            return;
+          }
+        }
+
+        // Quiz option selection via keys 1, 2, 3, 4 or A, B, C, D
+        if (state.scene === 'quiz' && !state.answered) {
+          let chosenKey = null;
+          if (key === '1' || key === 'A') chosenKey = 'A';
+          if (key === '2' || key === 'B') chosenKey = 'B';
+          if (key === '3' || key === 'C') chosenKey = 'C';
+          if (key === '4' || key === 'D') chosenKey = 'D';
+
+          if (chosenKey) {
+            const bIdx = state.balloonObjects.findIndex(b => b.choiceKey === chosenKey);
+            selectAnswer(chosenKey, bIdx);
+          }
+        }
+      });
+
+      // Toast Notification Helper
+      let toastTimeout = null;
+      function showToast(msg, icon = 'ℹ️') {
+        const toast = document.getElementById('toast-msg');
+        const text = document.getElementById('toast-text');
+        const iconEl = document.getElementById('toast-icon');
+        text.textContent = msg;
+        iconEl.textContent = icon;
+
+        toast.classList.remove('opacity-0');
+        toast.classList.add('opacity-100');
+
+        clearTimeout(toastTimeout);
+        toastTimeout = setTimeout(() => {
+          toast.classList.remove('opacity-100');
+          toast.classList.add('opacity-0');
+        }, 2800);
+      }
+
+      /* =================================================================
+         9. THREE.JS RENDER LOOP & PROCEDURAL ANIMATIONS
+         ================================================================= */
+      const clock = new THREE.Clock();
+
+      function animate() {
+        requestAnimationFrame(animate);
+
+        const delta = clock.getDelta();
+        const time = clock.getElapsedTime();
+
+        // Slow graceful rotation & bobbing of thematic centerpiece
+        if (centerpieceGroup) {
+          centerpieceGroup.rotation.y = Math.sin(time * 0.25) * 0.15;
+          centerpieceGroup.position.y = -0.3 + Math.sin(time * 0.6) * 0.05;
+        }
+
+        // Soft floating & bobbing animations for balloons
+        state.balloonObjects.forEach((bData, idx) => {
+          // Bobbing along Y & slight tilting
+          const floatY = Math.sin(time * 1.5 + bData.floatOffset) * 0.08;
+          const floatRotZ = Math.sin(time * 1.2 + bData.floatOffset) * 0.04;
+
+          bData.group.position.y = bData.basePos.y + floatY;
+          bData.group.rotation.z = floatRotZ;
+
+          // Smooth scale lerp (for hover & pop burst)
+          bData.currentScale += (bData.targetScale - bData.currentScale) * 0.15;
+          bData.group.scale.setScalar(bData.currentScale);
+        });
+
+        // Update particle bursts
+        for (let i = state.particleBursts.length - 1; i >= 0; i--) {
+          const burst = state.particleBursts[i];
+          const posAttr = burst.mesh.geometry.attributes.position;
+
+          for (let j = 0; j < burst.velocities.length; j++) {
+            posAttr.setX(j, posAttr.getX(j) + burst.velocities[j].x);
+            posAttr.setY(j, posAttr.getY(j) + burst.velocities[j].y);
+            posAttr.setZ(j, posAttr.getZ(j) + burst.velocities[j].z);
+            // Slight gravity
+            burst.velocities[j].y -= 0.003;
+          }
+          posAttr.needsUpdate = true;
+
+          burst.life -= burst.decay;
+          burst.mesh.material.opacity = Math.max(0, burst.life);
+
+          if (burst.life <= 0) {
+            scene.remove(burst.mesh);
+            burst.mesh.geometry.dispose();
+            burst.mesh.material.dispose();
+            state.particleBursts.splice(i, 1);
+          }
+        }
+
+        renderer.render(scene, camera3D);
+      }
+
+      animate();
+
+      // Ensure audio context initializes on first user touch anywhere
+      window.addEventListener('click', () => sounds.init(), { once: true });
+      window.addEventListener('touchstart', () => sounds.init(), { once: true });
+    </script>
+  </body>
+</html>
